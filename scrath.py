@@ -1,23 +1,5 @@
-import numpy as np 
-""" This is a scratchpad for LP
-Standard form:
-Maximize: c^T @ x
-Subject to: A @ x <= b
-x >= 0
+import numpy as np
 
-c : n x 1 vector
-A : m x n matrix
-b : m x 1 vector
-x : n x 1 vector
-
-step1: input n,m and c, A, b
-step2: find if there's identity matrix (vectors). if not, add artificial variables. Select the basis
-step3: calculate the deltas = c_j - C_B ^ T @ A_j
-step4: if not optimal yet, select the k-th and calculate theta = b_i / a_ij, choose the smallest one, x_r in while x_k out
-step5: Change the basis and let A[i=r] = A[i=r]/=a_rk, and make A[j=k] be a identity vector.
-step6: Go to step 3
-step7: End with outputing x* and z*
-"""
 def find_identity_matrix_columns(A, tol=1e-8):
     """
     在矩阵 A 的列中寻找恰好组成单位矩阵的列，即返回一个长度为 n 的列表，
@@ -40,46 +22,37 @@ def find_identity_matrix_columns(A, tol=1e-8):
             return match_indices
     return match_indices
 
-
 def main(A_data:list, b_data:list, c_data:list):
     # --------------------------
     # 输入问题：标准形 LP
     # 最大化： c^T x
     # 约束： A x <= b, x >= 0
     # --------------------------
-    # 示例数据
-    # A_data = [
-    #     [0, 5, 1, 0, 0],
-    #     [6, 2, 1, 1, 0],
-    #     [1, 1, 0, 0, 1]
-    # ]
-    # b_data = [15, 24, 5]
-    # c_data = [2, 1, 0, 0, 0]
-
     n = len(A_data)      # 行数
     m = len(A_data[0])   # 列数
 
-    # 转换为 numpy 数组（采用 float16 可修改为 float64 以提高精度）
+    # 转换为 numpy 数组（采用 float64 以提高精度）
     BIG_M = 1000 * np.max(A_data)
     convert_func = lambda y: np.array(y, dtype=np.float64)
     A = convert_func(A_data)
     b = convert_func(b_data)
     c = convert_func(c_data)
 
-    # 试找是否有单位向量列作为初始基
+    # 尝试寻找是否有单位向量列作为初始基
     ivIndicies = find_identity_matrix_columns(A)
-
     print("初始基变量索引:", ivIndicies)
 
-    # 如果未找到完整的初始基，则引入人工变量（使用 Big M 法）
+    # 如果未找到完整初始基，则引入人工变量（使用 Big M 法）
+    artificial_offset = m  # 原始变量数量 m 保留
     if None in ivIndicies:
-        # 添加人工变量：在 A 后面拼接单位阵，同时更新 c（目标系数为 -BIG_M）
+        # 将单位阵拼接到 A 后面，同时更新目标系数 c（人工变量目标系数为 -BIG_M）
         A = np.concatenate((A, np.eye(n, dtype=np.float64)), axis=1)
         c = np.concatenate((c, -np.ones(n, dtype=np.float64) * BIG_M), axis=0)
+        # 基变量全部为人工变量，新基索引为 [m, m+1, ..., m+n-1]
         ivIndicies = [idx for idx in range(m, m+n)]
         m = m + n  # 更新 A 的列数
 
-    # 构造增强系数矩阵 Aug = [A | b] ，b重塑为列向量
+    # 构造增强矩阵 Aug = [A | b]，其中 b 重塑为列向量
     Aug = np.concatenate((A, b.reshape(-1, 1)), axis=1)
 
     # 设置最大迭代次数，防止死循环
@@ -95,47 +68,61 @@ def main(A_data:list, b_data:list, c_data:list):
         # 当前基变量对应的目标系数向量 C_B
         C_B = np.array([ c[i] for i in ivIndicies ])
         
-        # 计算 deltas = c_j - C_B * A[:,j] 对于 j=0,..., m-1
+        # 计算增广费用（deltas）：delta_j = c_j - C_B dot A[:,j]，j=0,..., m-1
         deltas = np.zeros(m)
         for j in range(m):
-            # 这里 A[:, j] 为 j 列， C_B 为一维数组，二者点积即为 sum(C_B * A[:, j])
             deltas[j] = c[j] - np.dot(C_B, A[:, j])
         
-        # 如果所有 deltas <= 0，则达到最优（注意对于最大化问题，进入规则选取正值）
-        k0 = np.where(deltas > 0)[0]
-        if k0.size == 0:
-            # 构造最优解：对每个变量，若在基中则取对应 b 的值，否则为 0
-            X = np.zeros(m)
-            # 但注意：原始变量数不超过初始 m_data，人工变量通常忽略
+        # 如果所有 deltas <= 0，则当前解为最优
+        if np.all(deltas <= 1e-8):
+            # 若存在人工变量在基中，检查其对应 b 值是否为零
+            infeasible = False
             for idx in ivIndicies:
-                X[idx] = b[ ivIndicies.index(idx) ]  # 此处简单起见：对应于 b 的值
-            print("最优解 (基变量):")
-            print("基变量索引:", ivIndicies)
-            # 输出目标函数值（基于 C_B 与 b）
-            z = np.dot(C_B, b)
-            print("最优目标值 Z* =", z)
+                if idx >= artificial_offset:  # 人工变量
+                    # 找到该基变量所在行
+                    row = ivIndicies.index(idx)
+                    if abs(b[row]) > 1e-6:
+                        infeasible = True
+                        break
+            if infeasible:
+                print("问题不可行（存在非零的人工变量）")
+            else:
+                # 构造最优解：对于每个变量，若在基中则取对应 b 的值，否则为 0
+                X = np.zeros(m)
+                for row, idx in enumerate(ivIndicies):
+                    X[idx] = b[row]
+                print("最优解 (基变量):")
+                print("基变量索引:", ivIndicies)
+                z = np.dot(C_B, b)
+                print("最优目标值 Z* =", z)
             break
 
-        # 选择第一个正增益的非基变量作为进入变量（你可以改用 Bland 规则等更稳定的规则）
-        k = k0[0]
+        # 选择第一个正增益变量作为进入变量
+        candidate_indices = np.where(deltas > 1e-8)[0]
+        k = candidate_indices[0]
 
-        # 对于每一行，计算 theta = b_i / Aug[i,k]，仅当 Aug[i,k] > 0，否则设为一个大数（BIG_M）
+        # 对于每一行，计算 theta = b_i / Aug[i,k]（仅当 Aug[i,k] > 1e-8，否则赋值 BIG_M）
         thetas = np.full(n, BIG_M, dtype=np.float64)
         for i in range(n):
-            if Aug[i, k] > 1e-8:  # 只考虑正 pivot 元
+            if Aug[i, k] > 1e-8:
                 thetas[i] = Aug[i, -1] / Aug[i, k]
 
-        # 选择最小正 theta 对应的行（离基变量中要出基的那个变量）
+        # 如果所有的 pivot 元素均不正，则说明该变量无法改变当前解，可能问题不可行或无界
+        min_theta = np.min(thetas)
+        if min_theta == BIG_M:
+            print(f"在第 {iter_count} 次迭代中，变量 x_{k} 作为进入变量时无合法离基变量，问题可能不可行。")
+            break
+
+        # 选择使 theta 最小的行作为离基变量
         r0 = np.argmin(thetas)
         leaving_var = ivIndicies[r0]
-
         print(f"迭代 {iter_count}: x_{k} 进入， x_{leaving_var} 离出基")
         
-        # 进行主元变换：首先归一化主元行
+        # 主元变换：先对 pivot 行归一化
         pivot = Aug[r0, k]
         Aug[r0] = Aug[r0] / pivot
 
-        # 其余行消去
+        # 对其它各行进行消元
         for i in range(n):
             if i != r0:
                 factor = Aug[i, k]
@@ -144,21 +131,17 @@ def main(A_data:list, b_data:list, c_data:list):
         # 更新基变量索引
         ivIndicies[r0] = k
 
-        # 同步更新 A 和 b（A 为 Aug 前 m 列，b 为最后一列）
+        # 同步更新 A 与 b：A 为 Aug 的前 m 列，b 为最后一列
         A = Aug[:, :m]
         b = Aug[:, -1]
 
-        # 输出当前增强矩阵（调试用）
-        # print("当前增强矩阵 Aug:")
-        # print(Aug)
-        
 if __name__ == "__main__":
-    # 示例：约束为 x1 + x3 = 100, x2 + x4 = 120, 目标函数 maximize 200 x1 + 300 x2
+    # 示例：输入矛盾约束（无可行解），例如：
+    # x1 + x3 = 100, x1 - x2 = 200，可能构造出矛盾
     A_data = [
-        [1, 0, 1, 0, 0],
-        [0, 1, 0, 1, 0],
-        [1, 2, 0, 0, 1]
+        [1, 0, 1],
+        [1, -1, 0]
     ]
-    b_data = [100, 120, 160]
-    c_data = [200, 300, 0, 0, 0]
+    b_data = [100, 200]
+    c_data = [2, 1, 0]
     main(A_data, b_data, c_data)
