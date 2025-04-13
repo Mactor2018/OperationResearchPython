@@ -2,8 +2,10 @@ import numpy as np
 from enum import Enum
 from enum import auto
 from data import Data 
-
+from collections import deque # For BFS
+from copy import deepcopy
 class InputError(Exception):
+    """LinearProgram.__init__"""
     pass
 
 class LinearProgram:
@@ -40,12 +42,16 @@ class LinearProgram:
         
         # Standardize the objective method:
         self.data.c *= obj.value 
-        
-    def find_identity_matrix_columns(self, tol=1e-8):
+    
+    def add_constraint(self, Ar:np.ndarray, rel:Data.REL, br:float):
+        # assert self.data, "self.data has not been initialized yet."
+        self.data.add_constraint( Ar, rel, br)
+
+    def find_identity_matrix_columns(self, tol=1e-8)->list:
         """
-        在矩阵 A 的列中寻找恰好组成单位矩阵的列，即返回一个长度为 n 的列表，
-        列表中第 i 个元素为与标准基向量 e_i 匹配的列索引；
-        若找不到全部匹配，则返回当前匹配结果（其中可能有 None）。
+        Find the column indices to construct an identity matrix,
+            if not all matched, `None` will be included in the list returned
+        。
         """
         n, m = self.data.A.shape
         identity = np.eye(n)
@@ -59,8 +65,8 @@ class LinearProgram:
                     match_indices[i] = col_idx
                     used[i] = True
                     break
-            if all(used):
-                return match_indices
+            # if all(used):
+            #     return match_indices
         return match_indices
     
     def solve(self) -> dict:
@@ -162,11 +168,85 @@ class LinearProgram:
             # 同步更新 A 与 b（Aug 的前 m 列和最后一列）
             A = Aug[:, :m]
             b = Aug[:, -1]
+class IntegerProgram(LinearProgram):
+
+    @staticmethod
+    def isIntegerSolution(resultDict: dict) -> tuple[bool, int]:
+        # Return True only when all the value of the solution are INTEGERS
+        # Return a tuple: (True/False, The first non-integer index or None)
+        if not resultDict["feasible"]:
+            return (False, None)
+        for i in range(len(resultDict["X_star"])):
+            x_i = resultDict["X_star"][i]
+
+            if abs(x_i - int(x_i)) > 1e-6:
+                return (False, i)
+        return (True, None)
+
+    def solve(self):
+        """
+        Use BFS and B-a-B trying to find the best INTEGER solution (only keep the first found one if multiple largest solutions exist)
+        """
+        from math import floor, ceil
+        Q = deque()
+        lp0 = deepcopy(self)
+        
+        initial_s = LinearProgram.solve(lp0)
+        is_init_integer, first_non_int_index = self.isIntegerSolution(initial_s)
+        if not initial_s["feasible"]:
+            return initial_s # The initial problem is not feasible
+        if is_init_integer:
+            # The initial solution is already what we need and feasible
+            return initial_s
+
+        self.L = -1e10  
+        self.bestSolution = None
+
+        Q.append(lp0)
+        
+        while Q:
+            currentLP = Q.popleft()
+            currentSolution = LinearProgram.solve(currentLP) # LP.solve
+            
+            if not currentSolution["feasible"]:
+                continue # Do not branch here
+            
+            currentZ = currentSolution["z_star"]
+            
+            if currentZ <= self.L: # If no better solution found, do not branch here
+                continue
+
+            # The newly found solution is better than the previous
+            is_integer, first_non_int_index = self.isIntegerSolution(currentSolution)
+            if is_integer:
+                if currentZ > self.L: # Update the lower bound and the bestSolution
+                    self.bestSolution = deepcopy(currentSolution)
+                    self.L = currentZ
+            else:
+                x_k = currentSolution["X_star"][first_non_int_index] # make branches here
+                floor_val = floor(x_k)
+                ceil_val = floor_val + 1
+
+                # Left child： x[first_non_int_index] <= floor_val
+                # Right child: x[first_non_int_index] >= ceil_val
+                lp_left, lp_right = deepcopy(currentLP), deepcopy(currentLP)
+
+                Ar = np.zeros(len(currentSolution["X_star"]), dtype=np.float32)
+                Ar[first_non_int_index] = 1
+
+                lp_left.add_constraint(Ar, Data.REL.LEQ, floor_val)
+                lp_right.add_constraint(Ar, Data.REL.GEQ, ceil_val)
+                
+                Q.append(lp_left)
+                Q.append(lp_right)
+
+        return self.bestSolution if self.bestSolution is not None else {"feasible": False}
+
+
 
 
 if __name__=="__main__":
-    # 示例：输入矛盾约束（无可行解），例如：
-    # x1 + x3 = 100, x1 - x2 = 200，可能构造出矛盾
+    # x1 + x3 = 100, x1 - x2 = 200，
     # A_data = [
     #     [1, 0, 1],
     #     [1, -1, 0]
@@ -174,14 +254,26 @@ if __name__=="__main__":
     # b_data = [1400, 200]
     # c_data = [2, 1, 0]
     # rel_list = [Data.REL.GEQ, Data.REL.LEQ]
-    A_data = [
-        [1,0],
-        [0,1],
-        [1,2]
-    ]
-    b_data = [100, 120, 160]
-    c_data = [-200,-300]
+    # A_data = [
+    #     [1,0],
+    #     [0,1],
+    #     [1,2]
+    # ]
+    # b_data = [100, 120, 160]
+    # c_data = [-200,-300]
 
-    rel_list = [Data.REL.LEQ, Data.REL.LEQ, Data.REL.LEQ]
-    lp = LinearProgram(LinearProgram.OBJ.MIN, A_data, b_data, c_data, rel_list)
-    print( lp.solve() )
+    # rel_list = [Data.REL.LEQ, Data.REL.LEQ, Data.REL.LEQ]
+    # lp = LinearProgram(LinearProgram.OBJ.MIN, A_data, b_data, c_data, rel_list)
+    # print( lp.solve() )
+
+    c_data = [40,90]
+    A_data = [
+        [9,7],
+        [7,20]
+    ]
+    b_data = [56,70]
+    rel_list = [Data.REL.LEQ, Data.REL.LEQ]
+    ip = IntegerProgram(LinearProgram.OBJ.MAX, A_data, b_data, c_data, rel_list)
+    print(ip.solve())
+
+    # TODO: Better Input Format
