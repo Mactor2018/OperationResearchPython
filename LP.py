@@ -243,8 +243,6 @@ class IntegerProgram(LinearProgram):
         return self.bestSolution if self.bestSolution is not None else {"feasible": False}
 
 
-
-
 if __name__=="__main__":
     # x1 + x3 = 100, x1 - x2 = 200，
     # A_data = [
@@ -266,14 +264,16 @@ if __name__=="__main__":
     # lp = LinearProgram(LinearProgram.OBJ.MIN, A_data, b_data, c_data, rel_list)
     # print( lp.solve() )
 
-    c_data = [40,90]
+    c_data = [5,4]
     A_data = [
-        [9,7],
-        [7,20]
+        [2,1],
+        [2/3,1]
     ]
-    b_data = [56,70]
+    b_data = [10,16/3]
     rel_list = [Data.REL.LEQ, Data.REL.LEQ]
-    ip = IntegerProgram(LinearProgram.OBJ.MAX, A_data, b_data, c_data, rel_list)
-    print(ip.solve())
+    # ip = IntegerProgram(LinearProgram.OBJ.MAX, A_data, b_data, c_data, rel_list)
+    # print(ip.solve())
+    lp = LinearProgram(LinearProgram.OBJ.MAX, A_data, b_data, c_data, rel_list)
+    print(lp.solve() )
 
     # TODO: Better Input Format
